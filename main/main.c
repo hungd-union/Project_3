@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include "esp_adc/adc_oneshot.h"
 #include "math.h"
+#include "driver/ledc.h"
 
 //Pin number declaration
 #define redLED_PIN          4  
@@ -29,7 +30,34 @@
 #define BITWIDTH        ADC_BITWIDTH_12
 #define DELAY_MS        25                  // Loop delay (ms)
 adc_oneshot_unit_handle_t adc1_handle;      // ADC for Mode
-adc_oneshot_unit_handle_t adc2_handle;      // ADC for Timer
+int int_timer; 
+int int_mode; 
+
+//Motor Variables 
+#define LEDC_TIMER              LEDC_TIMER_0
+#define LEDC_MODE               LEDC_LOW_SPEED_MODE
+#define LEDC_OUTPUT_IO         (15)
+#define LEDC_CHANNEL            LEDC_CHANNEL_0
+#define LEDC_DUTY_RES           LEDC_TIMER_13_BIT   // Set duty resolution to 13 bits
+#define LEDC_FREQUENCY          (50)                // Frequency in Hertz.
+#define degree_0                200
+#define degree_90               585
+float LEDC_DUTY = 200;
+
+hd44780_t lcd = {
+    .write_cb = NULL,
+    .font = HD44780_FONT_5X8,
+    .lines = 2,
+    .pins = {
+        .rs = GPIO_NUM_8,
+        .e  = GPIO_NUM_3,
+        .d4 = GPIO_NUM_9,
+        .d5 = GPIO_NUM_10,
+        .d6 = GPIO_NUM_11,
+        .d7 = GPIO_NUM_12,
+        .bl = HD44780_NOT_USED
+    }
+};
 
 //Global boolean values
 bool initial_message = true;
@@ -39,71 +67,35 @@ bool pSense = false;
 bool psbelt = false;
 bool engine = false;
 bool hold = false;
+bool resume = true;
 
 //Function prototypes
 static void pinConfig(void);
 static void ADC_Config(void);
-static void LCD_Config(void);
 static bool enable(void);
 static bool ignitionPressed(void);
-
-
-static uint32_t get_time_sec()
-{
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-    return tv.tv_sec;
-}
-
-void lcd_test(void *pvParameters)
-{
-    hd44780_t lcd =
-    {
-        .write_cb = NULL,
-        .font = HD44780_FONT_5X8,
-        .lines = 2,
-        .pins = {
-            .rs = GPIO_NUM_8,
-            .e  = GPIO_NUM_3,
-            .d4 = GPIO_NUM_9,
-            .d5 = GPIO_NUM_10,
-            .d6 = GPIO_NUM_11,
-            .d7 = GPIO_NUM_12,
-            .bl = HD44780_NOT_USED
-        }
-    };
-
-    ESP_ERROR_CHECK(hd44780_init(&lcd));
-
-    hd44780_gotoxy(&lcd, 0, 0);
-    hd44780_puts(&lcd, "\x08 Hello, World!");
-    hd44780_gotoxy(&lcd, 0, 1);
-    hd44780_puts(&lcd, "\x09 ");
-
-    char time[16];
-
-    while (1)
-    {
-        hd44780_gotoxy(&lcd, 2, 1);
-
-        snprintf(time, 7, "%" PRIu32 "  ", get_time_sec());
-        time[sizeof(time) - 1] = 0;
-
-        hd44780_puts(&lcd, time);
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-}
-
+static void servo_init(void);
+void servo_task();
 
 void app_main()
 {
+    TaskHandle_t xHandle;
     pinConfig();
     ADC_Config();
-    LCD_Config();
+    servo_init();
+
+    ESP_ERROR_CHECK(hd44780_init(&lcd));
+
+    xTaskCreate(servo_task, "Servo Task", 2048, NULL, 5, &xHandle);
+
     while(1){
         bool ignitEn = ignitionPressed();
         if (!engine) {
+            if (resume) {
+                vTaskDelete (xHandle);
+                resume = !resume;
+                hd44780_clear (&lcd);   
+            }
             //Check if the engine is not started.
             bool ready = enable();
 
@@ -159,8 +151,8 @@ void app_main()
             }
         }
 
-        else {
-            //Check if the engine is pressed
+        else {  
+            //If the engine is started
             if (ignitEn) {
                 //Turn off engine is ignite is pressed again.
                 gpio_set_level (redLED_PIN, 0);
@@ -168,7 +160,16 @@ void app_main()
                 engine = false;
             }
             else {
-                xTaskCreate(lcd_test, "lcd_test", configMINIMAL_STACK_SIZE * 3, NULL, 5, NULL);
+                if (!resume) {
+                    xTaskCreate(servo_task, "Servo Task", 2048, NULL, 5, &xHandle);
+                    resume = !resume;
+                }
+                
+                adc_oneshot_read
+                (adc1_handle, CHANNEL_Mode, &int_mode); 
+
+                adc_oneshot_read
+                (adc1_handle, CHANNEL_Timer, &int_timer);
             }
         }
         vTaskDelay (DELAY_MS/ portTICK_PERIOD_MS);
@@ -213,9 +214,8 @@ void ADC_Config (void) {
     // Unit configuration
     adc_oneshot_unit_init_cfg_t init_config1 = {
         .unit_id = ADC_UNIT_1,
-    };                                                  
+    };                                                
     adc_oneshot_new_unit(&init_config1, &adc1_handle);  
-    adc_oneshot_new_unit(&init_config1, &adc2_handle);  
 
     // Channel configuration
     adc_oneshot_chan_cfg_t config = {
@@ -223,28 +223,33 @@ void ADC_Config (void) {
         .bitwidth = BITWIDTH
     };                                                  
     adc_oneshot_config_channel (adc1_handle, CHANNEL_Mode, &config);
-    adc_oneshot_config_channel (adc2_handle, CHANNEL_Timer, &config);
+    adc_oneshot_config_channel (adc1_handle, CHANNEL_Timer, &config);
 }
 
-//Configure the LCD
-void LCD_Config (void) {
-    hd44780_t lcd =
-    {
-        .write_cb = NULL,
-        .font = HD44780_FONT_5X8,
-        .lines = 2,
-        .pins = {
-            .rs = GPIO_NUM_8,
-            .e  = GPIO_NUM_3,
-            .d4 = GPIO_NUM_9,
-            .d5 = GPIO_NUM_10,
-            .d6 = GPIO_NUM_11,
-            .d7 = GPIO_NUM_12,
-            .bl = HD44780_NOT_USED
-        }
+//Configure LEDC
+static void servo_init(void)
+{
+    // Prepare and then apply the LEDC PWM timer configuration
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_MODE,
+        .duty_resolution  = LEDC_DUTY_RES,
+        .timer_num        = LEDC_TIMER,
+        .freq_hz          = LEDC_FREQUENCY,  // Set output frequency at 50 Hz
+        .clk_cfg          = LEDC_AUTO_CLK
     };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
 
-    ESP_ERROR_CHECK(hd44780_init(&lcd));
+    // Prepare and then apply the LEDC PWM channel configuration
+    ledc_channel_config_t ledc_channel = {
+        .speed_mode     = LEDC_MODE,
+        .channel        = LEDC_CHANNEL,
+        .timer_sel      = LEDC_TIMER,
+        .intr_type      = LEDC_INTR_DISABLE,
+        .gpio_num       = LEDC_OUTPUT_IO,
+        .duty           = 0, // Set duty to 0%
+        .hpoint         = 0
+    };
+    ledc_channel_config(&ledc_channel);
 }
 
 /*Check the seat and seatbelt sensor
@@ -293,4 +298,165 @@ bool ignitionPressed (void) {
         return true;
     }
     return false;
+}
+
+int mode=0;
+int pastmode=0;
+int timer=0;
+int pasttimer=0;
+void servo_task (void *pvParameter) {
+    while (LEDC_DUTY != 200) {
+        LEDC_DUTY -= 2.567;
+        if (LEDC_DUTY < 200) {
+            LEDC_DUTY = 200;
+        }
+        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+        vTaskDelay(10 /portTICK_PERIOD_MS);
+    }
+    
+    int timer_delay = 1000;
+    while (1){
+        if (engine) {
+        
+            if (int_timer < 1365) {
+                timer_delay = 5000;
+                timer = 5;
+            }
+
+            else if (int_timer < 2730) {
+                timer_delay = 3000;
+                timer = 3;
+            }
+
+            else {
+                timer_delay = 1000;
+                timer = 1;
+            }
+
+
+            if (int_mode < 1024) {
+                mode = 0;
+                if (mode!= pastmode)    hd44780_clear (&lcd);  
+                hd44780_gotoxy(&lcd, 0, 0); 
+                hd44780_puts(&lcd, "\x08 MODE: OFF");
+                LEDC_DUTY = 200;
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+            }
+
+            else if (int_mode < 2047) {
+                mode = 1;
+                if (mode!= pastmode)    hd44780_clear (&lcd);    
+                hd44780_gotoxy(&lcd, 0, 0); 
+                hd44780_puts(&lcd, "\x08 MODE: LO");
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                while (LEDC_DUTY != 585) {
+                    LEDC_DUTY += 2.567;
+                    if (LEDC_DUTY > 585) {
+                        LEDC_DUTY = 585;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+                while (LEDC_DUTY != 200) {
+                    LEDC_DUTY -= 2.567;
+                    if (LEDC_DUTY < 200) {
+                            LEDC_DUTY = 200;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+            }
+
+            else if (int_mode < 3071) {
+                mode = 2;
+                if (mode!= pastmode)    hd44780_clear (&lcd);   
+                hd44780_gotoxy(&lcd, 0, 0); 
+                hd44780_puts(&lcd, "\x08 MODE: HI");
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                while (LEDC_DUTY != 585) {
+                    LEDC_DUTY += 6.4167;
+                    if (LEDC_DUTY > 585) {
+                        LEDC_DUTY = 585;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+                while (LEDC_DUTY != 200) {
+                    LEDC_DUTY -= 6.4167;
+                    if (LEDC_DUTY < 200) {
+                        LEDC_DUTY = 200;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+            }
+            
+            else {
+                mode = 3;
+                if (mode!= pastmode || timer != pasttimer)    hd44780_clear (&lcd);   
+                hd44780_gotoxy(&lcd, 0, 0); 
+                hd44780_puts(&lcd, "\x08 MODE: INT");
+                if (timer_delay == 1000) {
+                    hd44780_gotoxy(&lcd, 0, 1); 
+                    hd44780_puts(&lcd, "\x08 SHORT");
+                }
+                if (timer_delay == 3000) {
+                    hd44780_gotoxy(&lcd, 0, 1); 
+                    hd44780_puts(&lcd, "\x08 MEDIUM");
+                }
+                if (timer_delay == 5000) {
+                    hd44780_gotoxy(&lcd, 0, 1); 
+                    hd44780_puts(&lcd, "\x08 LONG");
+                }
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                while (LEDC_DUTY != 585) {
+                    LEDC_DUTY += 2.567;
+                    if (LEDC_DUTY > 585) {
+                        LEDC_DUTY = 585;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+                while (LEDC_DUTY != 200) {
+                    LEDC_DUTY -= 2.567;
+                    if (LEDC_DUTY < 200) {
+                        LEDC_DUTY = 200;
+                    }
+                    ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                    ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                    vTaskDelay(10 /portTICK_PERIOD_MS);
+                }
+                vTaskDelay(timer_delay / portTICK_PERIOD_MS);
+            }
+        }
+
+        else {
+            while (LEDC_DUTY != 200) {
+                LEDC_DUTY -= 6.4167;
+                if (LEDC_DUTY < 200) {
+                    LEDC_DUTY = 200;
+                }
+                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
+                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+                vTaskDelay(10 /portTICK_PERIOD_MS);
+            }
+        }
+
+        if (mode != pastmode || timer != pasttimer) {
+                pastmode = mode;
+                timer = pasttimer;
+        }
+
+        vTaskDelay (20/ portTICK_PERIOD_MS);
+    }
 }
