@@ -1,3 +1,4 @@
+//Compiler directives:
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <sys/time.h>
@@ -23,59 +24,60 @@
 #define passengerSeatSense  36
 #define LCD_bright          18
 
-//ADC constants
-#define CHANNEL_Mode    ADC_CHANNEL_6
-#define CHANNEL_Timer   ADC_CHANNEL_5
+//ADC constants and global variables
+#define CHANNEL_Mode    ADC_CHANNEL_6       // GPIO for Mode
+#define CHANNEL_Timer   ADC_CHANNEL_5       // GPIO for Timer
 #define ADC_ATTEN       ADC_ATTEN_DB_12
 #define BITWIDTH        ADC_BITWIDTH_12
 #define DELAY_MS        25                  // Loop delay (ms)
-adc_oneshot_unit_handle_t adc1_handle;      // ADC for Mode
-int int_timer; 
-int int_mode; 
+adc_oneshot_unit_handle_t adc1_handle;      // ADC handle for Mode and Timer
+int int_timer;                              // Keeping track of motor timer
+int int_mode;                               // Keeping track of motor mode
 
-//Motor Variables 
-#define LEDC_TIMER              LEDC_TIMER_0
+//Motor constants and global variables 
+#define LEDC_TIMER              LEDC_TIMER_0        //Set LEDC timer
 #define LEDC_MODE               LEDC_LOW_SPEED_MODE
-#define LEDC_OUTPUT_IO         (15)
-#define LEDC_CHANNEL            LEDC_CHANNEL_0
+#define LEDC_OUTPUT_IO          (15)                // GPIO connected to LEDC
+#define LEDC_CHANNEL            LEDC_CHANNEL_0      // Set LEDC Channel
 #define LEDC_DUTY_RES           LEDC_TIMER_13_BIT   // Set duty resolution to 13 bits
-#define LEDC_FREQUENCY          (50)                // Frequency in Hertz.
+#define LEDC_FREQUENCY          (50)                // Set LEC Frequency         
 #define degree_0                200
 #define degree_90               585
 float LEDC_DUTY = 200;
 
+//LCD structure, including GPIOs
 hd44780_t lcd = {
     .write_cb = NULL,
     .font = HD44780_FONT_5X8,
     .lines = 2,
     .pins = {
-        .rs = GPIO_NUM_8,
-        .e  = GPIO_NUM_3,
-        .d4 = GPIO_NUM_9,
-        .d5 = GPIO_NUM_10,
-        .d6 = GPIO_NUM_11,
-        .d7 = GPIO_NUM_12,
+        .rs = GPIO_NUM_8,                           // GPIO for Register Select
+        .e  = GPIO_NUM_3,                           // GPIO for enable
+        .d4 = GPIO_NUM_9,                           // GPIO for data 4
+        .d5 = GPIO_NUM_10,                          // GPIO for data 5
+        .d6 = GPIO_NUM_11,                          // GPIO for data 6
+        .d7 = GPIO_NUM_12,                          // GPIO for data 7
         .bl = HD44780_NOT_USED
     }
 };
 
 //Global boolean values
 bool initial_message = true;
-bool dSense = false;
-bool dsbelt = false;
-bool pSense = false;
-bool psbelt = false;
-bool engine = false;
-bool hold = false;
-bool resume = true;
+bool dSense = false;                //Driver Seat Sensor
+bool dsbelt = false;                //Passenger Seat Sensor
+bool pSense = false;                //Driver Seatbelt Sensor
+bool psbelt = false;                //Passenger Seatbelt Sensor
+bool engine = false;                //Engine state, false = off, true = on
+bool hold = false;                  //used for ignitionPressed()
+bool resume = true;                 //State of servo_task: resume/pause
 
 //Function prototypes
-static void pinConfig(void);
-static void ADC_Config(void);
-static bool enable(void);
-static bool ignitionPressed(void);
-static void servo_init(void);
-void servo_task();
+static void pinConfig(void);        //Configure and set up the GPIOs
+static void ADC_Config(void);       //Configure and set up ADC
+static bool enable(void);           //Check 4 seat and seatbelt sensors
+static bool ignitionPressed(void);  //Check if ignition button is pressed and released
+static void servo_init(void);       //Initialize the motor analog output
+void servo_task();                  //Task function for the servo
 
 void app_main()
 {
@@ -84,20 +86,20 @@ void app_main()
     ADC_Config();
     servo_init();
 
-    ESP_ERROR_CHECK(hd44780_init(&lcd));
+    ESP_ERROR_CHECK(hd44780_init(&lcd)); //Initialize the LCD
 
-    xTaskCreate(servo_task, "Servo Task", 2048, NULL, 5, &xHandle);
+    xTaskCreate(servo_task, "Servo Task", 2048, NULL, 5, &xHandle); //Start servo task
 
     while(1){
         bool ignitEn = ignitionPressed();
-        if (!engine) {
-            if (resume) {
+        if (!engine) {                  //Engine off State
+            if (resume) {               //Clear LCD and delete servo task
                 vTaskDelete (xHandle);
                 resume = !resume;
                 hd44780_clear (&lcd);   
             }
-            //Check if the engine is not started.
-            bool ready = enable();
+
+            bool ready = enable();      //Check if engine is ready to start
 
             if (dSense && initial_message){
                 //Prints out the welcome message when the driver is seated.
@@ -110,7 +112,7 @@ void app_main()
                 //Turn on greenlight if the engine is ready
                 gpio_set_level(greenLED_PIN, 1);
             }
-            else {
+            else {//Turn off greenlight otherwise
                 gpio_set_level(greenLED_PIN, 0);
             }
 
@@ -142,11 +144,11 @@ void app_main()
                     if (!psbelt){
                     printf("Passenger seatbelt not fastened\n");
                     }
-                    vTaskDelay (3000/ portTICK_PERIOD_MS);
+                    vTaskDelay (3000/ portTICK_PERIOD_MS); //3 Seconds delay
                 }
             }
 
-            else {
+            else {//Turn off alarm after 3 seconds
                 gpio_set_level (Alarm, 0);
             }
         }
@@ -154,17 +156,18 @@ void app_main()
         else {  
             //If the engine is started
             if (ignitEn) {
-                //Turn off engine is ignite is pressed again.
+                //Turn off engine if ignite is pressed again.
                 gpio_set_level (redLED_PIN, 0);
                 printf("Stopping the engine.\n");
                 engine = false;
             }
             else {
-                if (!resume) {
+                if (!resume) {  //Start servo task
                     xTaskCreate(servo_task, "Servo Task", 2048, NULL, 5, &xHandle);
                     resume = !resume;
                 }
                 
+                //Read Mode and Timer inputs
                 adc_oneshot_read
                 (adc1_handle, CHANNEL_Mode, &int_mode); 
 
@@ -178,6 +181,7 @@ void app_main()
 
 //Configure the GPIO
 void pinConfig(void){
+    //Reset pins
     gpio_reset_pin(greenLED_PIN);
     gpio_reset_pin(redLED_PIN);
     gpio_reset_pin(ignitionButton);
@@ -188,6 +192,7 @@ void pinConfig(void){
     gpio_reset_pin(Alarm);
     gpio_reset_pin(LCD_bright);
 
+    //Set directions
     gpio_set_direction(greenLED_PIN, GPIO_MODE_OUTPUT);
     gpio_set_direction(redLED_PIN, GPIO_MODE_OUTPUT);
     gpio_set_direction(Alarm, GPIO_MODE_OUTPUT);
@@ -197,12 +202,14 @@ void pinConfig(void){
     gpio_set_direction(driveSeatSense, GPIO_MODE_INPUT);
     gpio_set_direction(passengerSeatSense, GPIO_MODE_INPUT);
 
+    //Configure pullup/down
     gpio_pullup_en(ignitionButton);
     gpio_pullup_en(driveSeatBelt);
     gpio_pullup_en(driveSeatSense);
     gpio_pullup_en(passengerSeatBelt);
     gpio_pullup_en(passengerSeatSense);
 
+    //Initial levels
     gpio_set_level(greenLED_PIN, 0);
     gpio_set_level(redLED_PIN, 0);
     gpio_set_level(Alarm, 0);
@@ -246,7 +253,7 @@ static void servo_init(void)
         .timer_sel      = LEDC_TIMER,
         .intr_type      = LEDC_INTR_DISABLE,
         .gpio_num       = LEDC_OUTPUT_IO,
-        .duty           = 0, // Set duty to 0%
+        .duty           = 200, 
         .hpoint         = 0
     };
     ledc_channel_config(&ledc_channel);
@@ -304,6 +311,7 @@ int mode=0;
 int pastmode=0;
 int timer=0;
 int pasttimer=0;
+//These variables are used to compare current and past states
 void servo_task (void *pvParameter) {
     while (LEDC_DUTY != 200) {
         LEDC_DUTY -= 2.567;
@@ -314,42 +322,43 @@ void servo_task (void *pvParameter) {
         ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
         vTaskDelay(10 /portTICK_PERIOD_MS);
     }
+    //Slowly move the servo back to 0 degree when the engine is started
     
-    int timer_delay = 1000;
+    int timer_delay = 1000;     //Initial time delay
     while (1){
         if (engine) {
         
             if (int_timer < 1365) {
                 timer_delay = 5000;
                 timer = 5;
-            }
+            }//Set timer to long delay
 
             else if (int_timer < 2730) {
                 timer_delay = 3000;
                 timer = 3;
-            }
+            }//Set timer to medium delay
 
             else {
                 timer_delay = 1000;
                 timer = 1;
-            }
+            }//Set timer to short delay
 
 
-            if (int_mode < 1024) {
+            if (int_mode < 1024) {//Off mode
                 mode = 0;
                 if (mode!= pastmode)    hd44780_clear (&lcd);  
                 hd44780_gotoxy(&lcd, 0, 0); 
-                hd44780_puts(&lcd, "\x08 MODE: OFF");
+                hd44780_puts(&lcd, "MODE: OFF");
                 LEDC_DUTY = 200;
                 ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
             }
 
-            else if (int_mode < 2047) {
+            else if (int_mode < 2047) {//Low speed mode
                 mode = 1;
                 if (mode!= pastmode)    hd44780_clear (&lcd);    
                 hd44780_gotoxy(&lcd, 0, 0); 
-                hd44780_puts(&lcd, "\x08 MODE: LO");
+                hd44780_puts(&lcd, "MODE: LO");
                 ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
                 while (LEDC_DUTY != 585) {
@@ -372,11 +381,11 @@ void servo_task (void *pvParameter) {
                 }
             }
 
-            else if (int_mode < 3071) {
+            else if (int_mode < 3071) {//High speed mode
                 mode = 2;
                 if (mode!= pastmode)    hd44780_clear (&lcd);   
                 hd44780_gotoxy(&lcd, 0, 0); 
-                hd44780_puts(&lcd, "\x08 MODE: HI");
+                hd44780_puts(&lcd, "MODE: HI");
                 ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
                 while (LEDC_DUTY != 585) {
@@ -399,22 +408,22 @@ void servo_task (void *pvParameter) {
                 }
             }
             
-            else {
+            else {//Intermittent mode, low speed + delay
                 mode = 3;
                 if (mode!= pastmode || timer != pasttimer)    hd44780_clear (&lcd);   
                 hd44780_gotoxy(&lcd, 0, 0); 
-                hd44780_puts(&lcd, "\x08 MODE: INT");
+                hd44780_puts(&lcd, "MODE: INT");
                 if (timer_delay == 1000) {
                     hd44780_gotoxy(&lcd, 0, 1); 
-                    hd44780_puts(&lcd, "\x08 SHORT");
+                    hd44780_puts(&lcd, "SHORT");
                 }
                 if (timer_delay == 3000) {
                     hd44780_gotoxy(&lcd, 0, 1); 
-                    hd44780_puts(&lcd, "\x08 MEDIUM");
+                    hd44780_puts(&lcd, "MEDIUM");
                 }
                 if (timer_delay == 5000) {
                     hd44780_gotoxy(&lcd, 0, 1); 
-                    hd44780_puts(&lcd, "\x08 LONG");
+                    hd44780_puts(&lcd, "LONG");
                 }
                 ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
                 ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
@@ -440,23 +449,11 @@ void servo_task (void *pvParameter) {
             }
         }
 
-        else {
-            while (LEDC_DUTY != 200) {
-                LEDC_DUTY -= 6.4167;
-                if (LEDC_DUTY < 200) {
-                    LEDC_DUTY = 200;
-                }
-                ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, LEDC_DUTY);
-                ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
-                vTaskDelay(10 /portTICK_PERIOD_MS);
-            }
-        }
-
-        if (mode != pastmode || timer != pasttimer) {
+        if (mode != pastmode || timer != pasttimer) {//Update past mode and timer
                 pastmode = mode;
                 timer = pasttimer;
         }
 
-        vTaskDelay (20/ portTICK_PERIOD_MS);
+        vTaskDelay (20/ portTICK_PERIOD_MS);//Debounce delay
     }
 }
