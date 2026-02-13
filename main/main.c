@@ -128,6 +128,7 @@ void app_main()
                 else {
                     //Prints error and raise alarm otherwise.
                     gpio_set_level (Alarm, 1);
+                    printf ("Ignition inhibited.\n");
 
                     if (!dSense){
                     printf("Driver seat not occupied\n");
