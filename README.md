@@ -1,4 +1,7 @@
 ## Project 3 -- Ignition and Windshield Wiper Subsystem
+- Professor Traver
+- ECE 218 - 01
+- February 2026 
 
 # Team Members
 - Duy Hung, Dang
