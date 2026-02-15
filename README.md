@@ -6,7 +6,7 @@
 
 
 # Project Description
-
+While the engine is running (red LED on), the user can select the following wiper (PWM motor) modes with a dial (potentiometer): HI, LO, INT, or OFF. In each mode, the wipers should start at 0°, make their way up to 90°, and then back down to 0°. For context, a full swipe will be referred to when the wipers go from 0° up to 90°, and then back down to 0°. IN HI mode, the wipers should be moving at 25 rpm (revolutions per minute) with no delay between full swipes. In LO mode, the wipers should be moving at 10 rpm with no delay between full swipes. In INT mode, the wipers should be moving at 10 rpm, with a user set delay controlled by another dial between full swipes. This delay can be set to 1, 3, or 5 seconds. If the engine is turned off while the wipers are moving, the wipers will freeze at their position until the engine is turned on again, where the wiper will return to 0° at slow speed then iterating the current mode. If the mode is switched to OFF while another mode is still running, the current cycle is completed and wipers are returned to 0°. If the mode is switched to OFF while the wipers are hesitating in INT mode, they remain stationary. For each of these modes, a message is displayed on an LCD display corresponding to the present wiper mode, including the chosen delay for INT mode if it is the present mode. 
 
 # Wiring
 
@@ -14,8 +14,7 @@ Please see the source code for pins and connections.
 
 # Design alternatives
 
-- Continuous rotation servo:
-- Positional  servo:
+For this project, we had the opportunity to decide between using a continuous or a position servo motor. A continuous servo motor has a range of 0° - 180°, and a continuous servo motor does not have a range limit. Changing the duty cycle for the position servo motor changes its degree value, while changing the duty cycle of a continuous servo motor changes the speed of the motor. For this project, we decided to use a continuous servo motor as it was easier to design around, since using a continuous servo motor provided little added benefit to the system while also being more complicated to work with. It was easier because one of the project requirements was to have the wipers go from 0° to 90°. With a positional servo motor this is easy, as the duty cycle for 90° is a fixed value. Meanwhile,  for a continuous servo motor one would have to adjust the rate at which the duty cycle is changing and know where it is in space to achieve the same outcome, hence more difficult. We also opted to complete the challenge task, which was freezing the wipers at their current state when the engine is turned off, then the wipers returning to 0° at low speed before iterating the current mode when the engine is turned on again. We thought completing this exercise would be a fun challenge and represent a more realistic windshield wiper system.
 
 # Summary of Testing Results
 
