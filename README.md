@@ -1,11 +1,35 @@
-## What the example does
+## Project 3 -- Ignition and Windshield Wiper Subsystem
 
-* Initializes the driver
-* Uploads custom characters
-* Displays "Hello world!"
-* Displays the custom characters
-* Displays the current sec in a loop
+# Team Members
+- Duy Hung, Dang
+- Aaron, Binion
 
-## Wiring
+
+# Project Description
+
+
+# Wiring
 
 Please see the source code for pins and connections.
+
+# Design alternatives
+
+- Continuous rotation servo:
+- Positional  servo:
+
+# Summary of Testing Results
+
+| Ignition Subsystem                                                                                              |                                                                                            |                                   |
+|-----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|-----------------------------------|
+| Behaviors                                                                                                       | Test Project                                                                               | Results                           |
+| When the driver sits down, display the message, “Welcome to enhanced alarm system model 218-W26”.               | Power the board and monitor the board from VScode. Then, switch on the Driver Seat Sensor. | Driver welcome message activated. |
+| Indicate ignition enabled with the green LED only when both seats are occupied and both seatbelts are fastened. |                                                                                            |                                   |
+|                                                                                                                 |                                                                                            |                                   |
+
+| Windshield Wiper Subsystem                                                                          |                                                                                                                                                                                                                      |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+|-----------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Behaviors                                                                                           | Test Project                                                                                                                                                                                                         | Results                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| When the engine is on, the wiper has 4 modes of operations: HI, LO, INT, or OFF.                    | Turn on the engine and control the MODE potentiometer (GPIO specified in the source code): 1. Turn all the way to GND 2. Turn 1/3th way from GND to VCC 3. Turn 2/3th way from GND to VCC 4. Turn all the way to VCC | All tests passed: (MODE is always displayed on the first line when the wiper is working) 1. The wiper is stationary, LCD displayed "Mode: Off." 2. The wiper continuously slowly rotates, and the LCD displays "MODE: LO." 3. The wiper continuously fast rotates, and the LCD displays "MODE: HI." 4. The wiper rotates from 0 to 90 degrees and then back at a low speed, then stop for an amount of time, and the LCD displays: "Mode: INT" and the delay on the second line. |
+| INT Mode has 3 delay available: LONG, MEDIUM, SHORT                                                 | Turn the MODE potentiometer to INT, and control the TIMER potentiometer(GPIO specified in the source code): 1. Turn all the way to GND  2. Turn half way from GND to VCC  3. Turn all the way to VCC                 | All tests passed: (TIMER is always displayed on the second line when INT MODE is selected) 1. The wiper has a delay of 5 seconds between each motion, LCD displays "LONG" on the second line. 2. The wiper has a delay of 3 seconds between each motion, LCD displays "MEDIUM" on the second line. 3. The wiper has a delay of 1 seconds between each motion, LCD displays "SHORT" on the second line.                                                                           |
+| Stop the Wiper when the engine is off, and slowly returns to 0-degree when the engine is restarted. | Press the ignition button when engine is on and Wiper is not in OFF mode. Then, turn on the engine again.                                                                                                            | The wiper freezes in its current position. Then, after engine is restarted, the wiper slowly returns to 0-degree position and resume the selected mode.                                                                                                                                                                                                                                                                                                                          |
+| If the                                                                                              | Turn on the red LED. Then, turn off any DS, DSB, PS, PSB sensor (slide switch).                                                                                                                                      | The red LED remains on.                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
